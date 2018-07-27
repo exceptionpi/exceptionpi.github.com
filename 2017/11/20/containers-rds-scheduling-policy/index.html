@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+
+<html class="theme-next muse use-motion" lang="zh-Hans">
+<head>
+  <meta charset="UTF-8"/>
+<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2"/>
+<meta name="theme-color" content="#222">
+
+
+
+
+
+
+
+
+
+
+
+
+<meta http-equiv="Cache-Control" content="no-transform" />
+<meta http-equiv="Cache-Control" content="no-siteapp" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<link href="/lib/font-awesome/css/font-awesome.min.css?v=4.6.2" rel="stylesheet" type="text/css" />
+
+<link href="/css/main.css?v=6.3.0" rel="stylesheet" type="text/css" />
+
+
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=6.3.0">
+
+
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=6.3.0">
+
+
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=6.3.0">
+
+
+  <link rel="mask-icon" href="/images/logo.svg?v=6.3.0" color="#222">
+
+
+
+
+
+
+
+
+
+<script type="text/javascript" id="hexo.configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Muse',
+    version: '6.3.0',
+    sidebar: {"position":"left","display":"post","offset":12,"b2t":false,"scrollpercent":false,"onmobile":false},
+    fancybox: false,
+    fastclick: false,
+    lazyload: false,
+    tabs: true,
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    algolia: {
+      applicationID: '',
+      apiKey: '',
+      indexName: '',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    }
+  };
+</script>
+
+
+  
+
+
+
+
+  <meta name="description" content="前文《数据库容器化｜未来已来》我们介绍了基于 Kubernetes 实现的下一代私有 RDS. 其中, 调度策略是具体实现时至关重要的一环, 它关系到 RDS 集群的服务质量和部署密度. 那么, RDS 需要怎样的调度策略呢?本文通过数据库的视角结合 Kubernetes 的源码, 分享一下我的理解.">
+<meta name="keywords" content="Kubernetes,k8s,Docker,RDS">
+<meta property="og:type" content="article">
+<meta property="og:title" content="容器化 RDS｜调度策略">
+<meta property="og:url" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/index.html">
+<meta property="og:site_name" content="ExceptionPi">
+<meta property="og:description" content="前文《数据库容器化｜未来已来》我们介绍了基于 Kubernetes 实现的下一代私有 RDS. 其中, 调度策略是具体实现时至关重要的一环, 它关系到 RDS 集群的服务质量和部署密度. 那么, RDS 需要怎样的调度策略呢?本文通过数据库的视角结合 Kubernetes 的源码, 分享一下我的理解.">
+<meta property="og:locale" content="zh-Hans">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/human-evolution-map.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/mainframe.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/aws-rds.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/compute-res.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/pod-res.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/pod-request-code.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/balanced-resource.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/calculate-unused.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/computational-memory-separation.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/storage-provisoner.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/failover.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/scale-out.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/filter-pods.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/slave.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/anti-affinity.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/pods-score.png">
+<meta property="og:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/scatter-width.png">
+<meta property="og:updated_time" content="2018-07-27T07:42:37.450Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="容器化 RDS｜调度策略">
+<meta name="twitter:description" content="前文《数据库容器化｜未来已来》我们介绍了基于 Kubernetes 实现的下一代私有 RDS. 其中, 调度策略是具体实现时至关重要的一环, 它关系到 RDS 集群的服务质量和部署密度. 那么, RDS 需要怎样的调度策略呢?本文通过数据库的视角结合 Kubernetes 的源码, 分享一下我的理解.">
+<meta name="twitter:image" content="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/human-evolution-map.png">
+
+
+
+
+
+
+  <link rel="canonical" href="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/"/>
+
+
+
+<script type="text/javascript" id="page.configurations">
+  CONFIG.page = {
+    sidebar: "",
+  };
+</script>
+
+  <title>容器化 RDS｜调度策略 | ExceptionPi</title>
+  
+
+
+
+
+
+
+
+
+
+  <noscript>
+  <style type="text/css">
+    .use-motion .motion-element,
+    .use-motion .brand,
+    .use-motion .menu-item,
+    .sidebar-inner,
+    .use-motion .post-block,
+    .use-motion .pagination,
+    .use-motion .comments,
+    .use-motion .post-header,
+    .use-motion .post-body,
+    .use-motion .collection-title { opacity: initial; }
+
+    .use-motion .logo,
+    .use-motion .site-title,
+    .use-motion .site-subtitle {
+      opacity: initial;
+      top: initial;
+    }
+
+    .use-motion {
+      .logo-line-before i { left: initial; }
+      .logo-line-after i { right: initial; }
+    }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="zh-Hans">
+
+  
+  
+    
+  
+
+  <div class="container sidebar-position-left page-post-detail">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-wrapper">
+  <div class="site-meta ">
+    
+
+    <div class="custom-logo-site-title">
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">ExceptionPi</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+    
+      
+        <p class="site-subtitle">异常常有，源远流长</p>
+      
+    
+  </div>
+
+  <div class="site-nav-toggle">
+    <button aria-label="Toggle navigation bar">
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+
+
+<nav class="site-nav">
+  
+    <ul id="menu" class="menu">
+      
+        
+        
+        
+          
+          <li class="menu-item menu-item-home">
+    <a href="/" rel="section">
+      <i class="menu-item-icon fa fa-fw fa-home"></i> <br />Home</a>
+  </li>
+        
+        
+        
+          
+          <li class="menu-item menu-item-categories">
+    <a href="/categories/" rel="section">
+      <i class="menu-item-icon fa fa-fw fa-th"></i> <br />Categories</a>
+  </li>
+        
+        
+        
+          
+          <li class="menu-item menu-item-archives">
+    <a href="/archives/" rel="section">
+      <i class="menu-item-icon fa fa-fw fa-archive"></i> <br />Archives</a>
+  </li>
+        
+        
+        
+          
+          <li class="menu-item menu-item-tags">
+    <a href="/tags/" rel="section">
+      <i class="menu-item-icon fa fa-fw fa-tags"></i> <br />Tags</a>
+  </li>
+
+      
+      
+    </ul>
+  
+
+  
+    
+
+  
+
+  
+</nav>
+
+
+
+  
+
+
+
+</div>
+    </header>
+
+    
+
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+    
+
+  
+
+  
+  
+  
+
+  
+
+  <article class="post post-type-normal" itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block">
+    <link itemprop="mainEntityOfPage" href="http://yoursite.com/2017/11/20/containers-rds-scheduling-policy/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="rdc.woqu@woqutech.com">
+      <meta itemprop="description" content="沃趣研发中心博客">
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="ExceptionPi">
+    </span>
+
+    
+      <header class="post-header">
+
+        
+        
+          <h1 class="post-title" itemprop="name headline">容器化 RDS｜调度策略
+              
+            
+          </h1>
+        
+
+        <div class="post-meta">
+          <span class="post-time">
+
+            
+            
+            
+
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">Posted on</span>
+              
+
+              
+                
+              
+
+              <time title="Created: 2017-11-21 11:11:11" itemprop="dateCreated datePublished" datetime="2017-11-21T11:11:11+08:00">2017-11-21</time>
+            
+
+            
+              
+
+              
+                
+                <span class="post-meta-divider">|</span>
+                
+
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-calendar-check-o"></i>
+                </span>
+                
+                  <span class="post-meta-item-text">Edited on</span>
+                
+                <time title="Modified: 2018-07-27 15:42:37" itemprop="dateModified" datetime="2018-07-27T15:42:37+08:00">2018-07-27</time>
+              
+            
+          </span>
+
+          
+            <span class="post-category" >
+            
+              <span class="post-meta-divider">|</span>
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-folder-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">In</span>
+              
+              
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing"><a href="/categories/后端/" itemprop="url" rel="index"><span itemprop="name">后端</span></a></span>
+
+                
+                
+              
+            </span>
+          
+
+          
+            <span> ｜ </span>
+            <span class="fa fa-user-o"> </span>
+            
+              <span style="color: #222;">Orain</span>
+            
+          
+
+          
+            
+          
+
+          
+          
+
+          
+
+          
+
+          
+
+        </div>
+      </header>
+    
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+      
+
+      
+        <p>前文<a href="/2017/11/07/containers-rds-in-the-future/" title="《数据库容器化｜未来已来》">《数据库容器化｜未来已来》</a>我们介绍了基于 <em>Kubernetes</em> 实现的下一代私有 <em>RDS</em>. 其中, 调度策略是具体实现时至关重要的一环, 它关系到 <em>RDS</em> 集群的服务质量和部署密度. 那么, <em>RDS</em> 需要怎样的调度策略呢?本文通过数据库的视角结合 <em>Kubernetes</em> 的源码, 分享一下我的理解.</p>
+<a id="more"></a>
+<blockquote>
+<p><em>It was the best of times, it was the worst of times.</em> — <em>by Dickens.</em></p>
+</blockquote>
+<p>人类从爬行到直立用了几百万年, 但是我们这些码农从 <em>Bare Metal</em> 到 <em>Container</em> 只花了几万分之一的时间.</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/human-evolution-map.png" title="Human evolutionmap">
+<p>我有个朋友是维护 <em><a href="https://en.wikipedia.org/wiki/Mainframe_computer" target="_blank" rel="noopener">Mainframe</a></em> 的, 他还在使用40年前的系统. </p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/mainframe.png" title="Mainframe">
+<h2 id="调度策略很重要"><a href="#调度策略很重要" class="headerlink" title="调度策略很重要"></a>调度策略很重要</h2><p>看巨人们在干什么, 有助于我们更好的理解这个世界.</p>
+<h3 id="Google-Borg"><a href="#Google-Borg" class="headerlink" title="Google Borg"></a><em>Google Borg</em></h3><p>先看看 <em>Google</em> 是如何看待 <em>Borg</em> (<em>Kubernetes</em> 的前身) 的核心价值. 在 <em>Google paper <large-scale cluster="" management="" at="" google="" with="" borg=""></large-scale></em>中,开篇就定义了 <em>Borg</em> :</p>
+<blockquote>
+<p>It achieves <strong><em>high utilization</em></strong> by combining admission control, efficient task-packing, over-commitment, and machine sharing with process-level performance isolation.</p>
+</blockquote>
+<p>PS : 里面还转门介绍了基于 <em>CPI (Cycles Per Instruction)</em> 测量资源利用率的方式.</p>
+<h3 id="AWS-RDS"><a href="#AWS-RDS" class="headerlink" title="AWS RDS"></a><em>AWS RDS</em></h3><p>再看看公有云的领头羊, <em>AWS</em> 是这样描述其 <em>RDS</em> 产品的:</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/aws-rds.png" title="AWS RDS">
+<p>可见, 不管是 <em>Google Borg</em> 还是 <em>AWS RDS</em>, 除了提供更灵活, 更开放, 更兼容, 更安全, 可用性更高的集群, 都将 <strong><em>cost-efficient</em></strong>, <strong><em>high utilization</em></strong> 放到了极为重要的位置. </p>
+<p><strong>提高部署密度, 减少硬件的需求量, 最终达到降低硬件投入的目标.同事, 必须满足业务需求.</strong></p>
+<h2 id="视角"><a href="#视角" class="headerlink" title="视角"></a>视角</h2><p><strong>本文尝试以数据库的视角, 从多个角度阐述 <em>RDS</em> 场景需要怎样的调度策略.</strong></p>
+<p>说明:</p>
+<ul>
+<li>为了实现更精细化的调度策略, Kubernetes(版本1.7) 调度器提供了 17 个调度算法. 这些算法分为两类 Predicate 和 Priority, 通俗的描述是过滤和打分. 设计思路大致如下 :<ul>
+<li>通过过滤算法, 先挑出出满足条件的节点</li>
+<li>通过打分算法, 对上一步挑出的节点进行打分并排名<br>总分 = (权重1 <em> 打分函数1) + (权重2 </em> 打分函数2) + … + (权重n * 打分函数n)</li>
+<li>选择分数最高的节点, 如果有分数相同的, 随机挑一个</li>
+</ul>
+</li>
+<li>本文将基于 <em>Kubernetes</em> 的实现, 结合 <em>RDS</em> 场景展开, 并不会把所有的算法流水账似的写一遍, 相关资料很多, 有兴趣的同学可以去看文档.具体实现见<br><em>kubernetes/plugin/pkg/scheduler/algorithm/priorities</em><br><em>kubernetes/plugin/pkg/scheduler/algorithm/predicates</em></li>
+</ul>
+<p>下面进入主题.</p>
+<h3 id="视角一-计算资源调度策略"><a href="#视角一-计算资源调度策略" class="headerlink" title="视角一 : 计算资源调度策略"></a>视角一 : 计算资源调度策略</h3><p>这里讨论的计算资源仅包含 CPU, Memory</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/compute-res.png" title="Compute resource">
+<blockquote>
+<p>需要特别说明, 毕竟 Kubernetes 已经支持 GPU.</p>
+</blockquote>
+<p>看上去很简单, 挑选出一个满足资源要求的节点即可, 但是考虑到整合密度和数据库的业务特点并不简单, 我们还需要考虑到以下几点 :</p>
+<ul>
+<li>峰值和均值</li>
+<li>资源的平衡</li>
+</ul>
+<h4 id="峰值和均值"><a href="#峰值和均值" class="headerlink" title="峰值和均值"></a>峰值和均值</h4><p>数据库的负载随着业务, 时间, 周期不断变化, 到底是基于峰值调度还是均值调度呢? 这是一个有关部署密度的问题, 最好的办法就像 Linux 里面限定资源的方式, 让我们设置 Soft Limit 和 Hard Limit, 以 Soft Limit 分配资源, 同时 Hard Limit 又能限定使用的最大资源. <em>Kubernetes</em> 也是这么做的, 它会通过 Request 和 Limit 两个阈值来进行管理容器的资源使用.</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/pod-res.png" title="Pod resource">
+<div style="text-align: center;">Pod 是 <em>Kubernetes</em> 的调度单位</div>
+
+<p>Requst 作为 Pod 初始分配值, Limit 限定了 Pod 能使用的最大值. 分配时采用 Requst 值进行调度, 这里有个假设 : </p>
+<p><strong>同一节点上运行的容器不会同时达到 Limit 阈值</strong></p>
+<p>有效的实现了计算资源利用率的 <strong>*high utilization</strong>, 非常适合数据库开发或测试场景.</p>
+<p>如果假设不成立?</p>
+<p>当某节点运行的所有容器同时接近 Limit, 并有将节点资源<strong>用完的趋势或者事实(在运行的过程中, 调度器会定期收集所有节点的资源使用情况, “搜集”用词不太准确, 但便于理解), 创建 Pod 的请求也不会再调度到该节点</strong>.</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/pod-request-code.png" title="Code">
+<p>以内存为例, 当 Pod 的请求超出 Node 可以提供的内存, 会以异常的方式告知调度器, 内存资源不足.</p>
+<p>同时, 基于优先级, 部分容器将会被驱逐到其他节点(例如通过重启 Pod 的方式). 所以并不适合生产环境.</p>
+<h4 id="资源的平衡"><a href="#资源的平衡" class="headerlink" title="资源的平衡"></a>资源的平衡</h4><p>对于长期运行的集群, 在满足资源的同时还要考虑到集群中各节点资源分配的平衡性.</p>
+<blockquote>
+<p>类似 <strong><em>Linux Buddy System</em></strong>, 仅仅分配进程需要的内存是不够的, 还要保障操作系统内存的连续性.</p>
+</blockquote>
+<p>举个例子, <em>RDS</em> 集群有两个节点, 用户向 <em>RDS</em> 申请 <strong>2颗CPU</strong> 和 <strong>4GB内存</strong> 以创建 MySQL 实例, 两节点资源使用情况如下:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:center">节点名称</th>
+<th style="text-align:center">已用/总体(CPU核数)</th>
+<th style="text-align:center">已用/总体(内存)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:center">NodeA</td>
+<td style="text-align:center">8/16</td>
+<td style="text-align:center">8/32</td>
+</tr>
+<tr>
+<td style="text-align:center">NodeB</td>
+<td style="text-align:center">8/32</td>
+<td style="text-align:center">16/64</td>
+</tr>
+</tbody>
+</table>
+<p>在资源同时满足的情况下, 调度会通过两个公式对节点打分.</p>
+<p><strong>基于已使用资源比率(BalancedResource)打分, 实现如下.</strong></p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/balanced-resource.png" title="Balanced Resource">
+<p>将节点资源输入公式, 可简化成 :</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">NodeA 分数 = int(1-math.Abs(8/16 - 8/32)) * float64(10) = 30/4</span><br><span class="line">NodeB 分数 = int(1-math.Abs(8/32 - 16/64)) * float64(10) = 10</span><br></pre></td></tr></table></figure>
+<p>基于该算法 NodeB 的分数更高. </p>
+<p><strong>再通过未使用资源(calculateUnused)持续打分.</strong></p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/calculate-unused.png" title="Calculate Unused">
+<p>该算法可简化成 : </p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cpu((capacity - sum(requested)) * 10 / capacity) + memory((capacity - sum(requested)) * 10 / capacity) / 2</span><br></pre></td></tr></table></figure>
+<p>有兴趣的同学可以算一下, 不再赘述.</p>
+<p>数据库会被调度到综合打分最高的节点.</p>
+<h3 id="视角二-存储资源调度策略"><a href="#视角二-存储资源调度策略" class="headerlink" title="视角二 : 存储资源调度策略"></a>视角二 : 存储资源调度策略</h3><p>存储资源是有状态服务中至关重要的一环, 也让有状态服务的实现难度远超无状态服务.</p>
+<p>除了满足请求数据库的存储资源的容量要求, 调度策略必须要能够识别底层的存储架构和存储负载, 在提供存储资源的同时, 满足数据库的业务需求(比如数据零丢失和高可用).</p>
+<p>从2017年年初开始, 基于分布式存储技术, 我们的 <em>RDS</em> 已经实现了计算和存储分离的架构.</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/computational-memory-separation.png" title="Computational memory separation">
+<div style="text-align: center;">计算存储分离</div>
+
+<p>在实现数据库的数据零丢失,高可用的同时, 架构变得更通用, 更简单. 但对企业级用户, 还远远不够, <strong><em>cost-efficient</em></strong> 是考量产品成熟度的重要因素. </p>
+<p>所以从一开始, 我们就以3种维度的存储 QoS 来思考这个问题 :</p>
+<ul>
+<li>从功能角度 :<br>存储资源分成两大类 :<ul>
+<li><em>distribution</em>, 基于分布式存储技术实现, 对 Flash 设备做了专门的优化, 提供数据冗余和弹性扩容功能</li>
+<li><em>local</em>, 使用计算节点本地存储<br>对于生产环境, 我们会申请 distribution 资源. 而那些不太重要的或者临时性的, 譬如有的客户需要经常生成临时性的克隆库进行测试, 或者扩展临时备库以应对突发的业务高峰, 我们会申请 local 资源.</li>
+</ul>
+</li>
+<li>从性能角度 :<br>我们又将 <em>distribution</em> 分成了两类 high 和 medium , 以应业务不同的 <em>IOPS</em>, <em>Throughput</em>, <em>Latency</em> 需求.<br>IO 密集型业务, 我们会分配 high 类型. 对于计算密集型主库或者重要值很高的备库, 我们会分配 medium 类型.</li>
+<li>从数据库角度 :<br>比如, 不同的数据库物理卷的挂载参数也不同.<br>如果调度器能够实现, 将极大的提高存储资源的 <strong><em>cost-efficient</em></strong>.</li>
+</ul>
+<p><strong>些特性带有明显的数据库业务特性</strong>, 原生的 <em>Kubernetes</em> 调度器并不支持. 但是, 我们通过二次开发, 以 Out of Cluster 的方式实现了外置的 <em>Kubernetes storage provisoner</em>. 并通过自定义的参数和代码实现和调度器的交互.</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/storage-provisoner.png" title="Storage provisoner">
+<div style="text-align: center;"><em>Kubernetes</em> 会使用我们提供的 storage provisoner 创建存储资源.</div>
+
+<p>这样 <em>Kubernetes</em> 的调度器就可以基于 <em>RDS</em> 的业务需求, 感知底层存储架构, 提供满足业务需求的调度服务.</p>
+<p>除去需要的容量信息, 需要传递给调度器如下信息(就像请求 CPU, Memory 资源一样) :</p>
+<figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="string">volume.beta.kubernetes.io/mount-options:</span> <span class="string">sync</span></span><br><span class="line"><span class="string">volume.orain.com/storage-type:</span> <span class="string">"distribution"</span></span><br><span class="line"><span class="string">volume.orain.com/storage-qos:</span> <span class="string">"high"</span></span><br><span class="line"><span class="string">volume.orain.com/dc-id:</span> <span class="string">"278"</span></span><br></pre></td></tr></table></figure>
+<p>通过这四个参数将会告知</p>
+<ul>
+<li>从功能角度 :<br><code>volume.orain.com/storage-type</code>: “distribution”, 使用 distribution 类型存储资源</li>
+<li>从性能角度 :<br><code>volume.orain.com/storage-qos</code>: “high”, 从高性能存储池获取 Volume</li>
+<li>从数据库角度 :<br><code>volume.beta.kubernetes.io/mount-options</code>: sync, 使用特定 mount 参数<br><code>volume.orain.com/dc-id</code>: “278”, 使用编号为278的 Volume</li>
+</ul>
+<h3 id="视角三-关系型数据库"><a href="#视角三-关系型数据库" class="headerlink" title="视角三 : 关系型数据库"></a>视角三 : 关系型数据库</h3><p>关系型数据库是有状态服务, 但要求更加复杂. 比如我们提供了 <em>MySQL</em> 的 <em>ReadWrite Cluster</em> (读写分离集群) 和 <em>Sharding Cluster</em> (分库分表集群),每个数据库实例都有自己的角色. 调度器必须感知集群角色以实现业务特点 :</p>
+<p>比如, 基于数据库角色, 我们有如下调度需求 :</p>
+<ol>
+<li><em>ReadWrite Cluster</em> 的 <em>Master</em> 和 <em>Slave</em> 不能调度到同一节点</li>
+<li><em>Master</em> 的多个 <em>Slave</em> 不能调度到同一节点</li>
+<li><em>Sharding Cluster</em> 的每个分片不能调度到同一节点</li>
+<li>某些备份任务须调度到指定 <em>Slave</em> 所在的节点</li>
+<li>……</li>
+</ol>
+<p>带有明显的业务(<em>RDS</em>)特点, 原生 Kuberentes 的调度策略并不能识别这些角色和关系.</p>
+<p>与此同时, 容器的运行状态和 <em>RDS</em> 集群还在动态变化</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/failover.png" title="Failover">
+<div style="text-align: center;">因 Failover 迁移到其他节点</div>
+
+<img src="/2017/11/20/containers-rds-scheduling-policy/scale-out.png" title="Scale Out">
+<div style="text-align: center;"><em>RDS</em> 集群 Scale Out</div>
+
+<p>首先, 我们将一系列的具体的业务需求抽象成 :</p>
+<blockquote>
+<p><strong>亲和性(Affinity), 反亲和性(Anti-Affinity), 分布度(Spread Width)</strong></p>
+</blockquote>
+<p>再通过我们的二次开发, 将数据库的角色和业务流程集成到调度器中, 以满足全部需求.</p>
+<h4 id="亲和性-Affinity"><a href="#亲和性-Affinity" class="headerlink" title="亲和性(Affinity)"></a>亲和性(Affinity)</h4><p><strong>调度需求4</strong> 可以归纳到这里</p>
+<blockquote>
+<p>需求4 : 某些备份任务须调度到指定 <em>Slave</em> 所在的节点</p>
+</blockquote>
+<p>以待调度备份任务为输入, 在所有节点中找到指定 <em>Slave</em> 所在节点, 以确定待调度备份任务调度到哪个节点. <strong><em>该需求必须满足</em></strong>, 不然备份任务无法成功.</p>
+<p>查找该节点所有数据库实例</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/filter-pods.png" title="Filter Pods">
+<p>确定该节点是否有指定 <em>Slave</em></p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/slave.png" title="Slave">
+<h4 id="反亲和性-Anti-Affinity"><a href="#反亲和性-Anti-Affinity" class="headerlink" title="反亲和性(Anti-Affinity)"></a>反亲和性(Anti-Affinity)</h4><p><strong>调度需求1</strong> 可以归纳到这里</p>
+<blockquote>
+<p>需求1 : <em>ReadWrite Cluster</em> 的 <em>Master</em> 和 <em>Slave</em> 不能调度到同一节点</p>
+</blockquote>
+<p>以待调度数据库的角色为输入, 建立已运行数据库和节点的关系, 再通过 Anti-Affinity 公式对所有节点打分, 以此决定待调度数据库是否要调度到该节点. </p>
+<p><strong>以需求1为例, 统计集群成员的分布情况, 该节点上同一数据库集群的成员越多, 分数越低</strong>.</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/anti-affinity.png" title="Anti-Affinity">
+<div style="text-align: center;">反亲和性(Anti-Affinity)公式</div>
+
+<img src="/2017/11/20/containers-rds-scheduling-policy/pods-score.png" title="Pods score">
+<div style="text-align: center;">对所有节点打分</div>
+
+<h4 id="分布度-Spread-Width"><a href="#分布度-Spread-Width" class="headerlink" title="分布度(Spread Width)"></a>分布度(Spread Width)</h4><blockquote>
+<p>有种更时髦的叫法散射度(scatter width)</p>
+</blockquote>
+<p>需求2,3 可以归纳到这里.</p>
+<p><strong>以需求2为例, 统计集群成员的分布情况, 该节点上同一数据库集群的成员越多, 分数越低</strong>.</p>
+<img src="/2017/11/20/containers-rds-scheduling-policy/scatter-width.png" title="Spread Width">
+<p>然后对所有节点打分, 公式如下 :</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">float64(schedulerapi.MaxPriority) * ((maxCountByNodeName - countsByNodeName[node.Name]) / maxCountByNodeName)</span><br></pre></td></tr></table></figure>
+<p>需要特别说明的是, 在 <em>RDS</em> 进行调度时</p>
+<ul>
+<li>需求 1,4 必须满足;</li>
+<li>需求 2,3 尽量满足既可以.</li>
+</ul>
+<p><strong>必须和尽量</strong>也需要作为调度参数, 让调度器知晓.</p>
+<h2 id="结语"><a href="#结语" class="headerlink" title="结语"></a>结语</h2><p>本文仅以 <em>RDS</em> 的视角, 从三个层级讲述了对调度器的要求.</p>
+<p>真实的场景会更复杂, 比如针对 <em>ReadWrite Cluster</em>, <em>Slave</em> 必须等待 <em>Master</em> 创建完毕.<br>而 <em>Sharding Cluster</em>, 所有分片可以并发创建以提高效率, ……</p>
+<p>在设计产品和完成编码的过程中, 踩坑无数. 不能否认的是, 站在巨人的肩膀上可以让我们看的更远. 不知道 Ending 怎么写, 就这样吧.</p>
+<p>BTW, 如果你对我们正在做的事情感兴趣, 投简历我吧 <a href="mailto:orain.xiong@gmail.com" target="_blank" rel="noopener">orain.xiong@gmail.com</a>.</p>
+
+      
+    </div>
+
+    
+
+    
+    
+    
+
+    
+
+    
+
+    
+
+    <footer class="post-footer">
+      
+        <div class="post-tags">
+          
+            <a href="/tags/Kubernetes/" rel="tag"># Kubernetes</a>
+          
+            <a href="/tags/k8s/" rel="tag"># k8s</a>
+          
+            <a href="/tags/Docker/" rel="tag"># Docker</a>
+          
+            <a href="/tags/RDS/" rel="tag"># RDS</a>
+          
+        </div>
+      
+
+      
+      
+      
+
+      
+        <div class="post-nav">
+          <div class="post-nav-next post-nav-item">
+            
+              <a href="/2017/11/07/containers-rds-in-the-future/" rel="next" title="容器化 RDS｜未来已来">
+                <i class="fa fa-chevron-left"></i> 容器化 RDS｜未来已来
+              </a>
+            
+          </div>
+
+          <span class="post-nav-divider"></span>
+
+          <div class="post-nav-prev post-nav-item">
+            
+          </div>
+        </div>
+      
+
+      
+      
+    </footer>
+  </div>
+  
+  
+  
+  </article>
+
+
+  </div>
+
+
+          </div>
+          
+
+  
+
+
+
+        </div>
+        
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside id="sidebar" class="sidebar">
+    
+    <div class="sidebar-inner">
+
+      
+
+      
+        <ul class="sidebar-nav motion-element">
+          <li class="sidebar-nav-toc sidebar-nav-active" data-target="post-toc-wrap">
+            Table of Contents
+          </li>
+          <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+            Overview
+          </li>
+        </ul>
+      
+
+      <section class="site-overview-wrap sidebar-panel">
+        <div class="site-overview">
+          <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+            
+              <p class="site-author-name" itemprop="name">rdc.woqu@woqutech.com</p>
+              <p class="site-description motion-element" itemprop="description">沃趣研发中心博客</p>
+          </div>
+
+          
+            <nav class="site-state motion-element">
+              
+                <div class="site-state-item site-state-posts">
+                
+                  <a href="/archives">
+                
+                    <span class="site-state-item-count">2</span>
+                    <span class="site-state-item-name">posts</span>
+                  </a>
+                </div>
+              
+
+              
+                
+                
+                <div class="site-state-item site-state-categories">
+                  <a href="/categories/index.html">
+                    
+                    
+                      
+                    
+                    <span class="site-state-item-count">1</span>
+                    <span class="site-state-item-name">categories</span>
+                  </a>
+                </div>
+              
+
+              
+                
+                
+                <div class="site-state-item site-state-tags">
+                  <a href="/tags/index.html">
+                    
+                    
+                      
+                    
+                      
+                    
+                      
+                    
+                      
+                    
+                    <span class="site-state-item-count">4</span>
+                    <span class="site-state-item-name">tags</span>
+                  </a>
+                </div>
+              
+            </nav>
+          
+
+          
+
+          
+
+          
+          
+
+          
+          
+
+          
+            
+          
+          
+
+        </div>
+      </section>
+
+      
+      <!--noindex-->
+        <section class="post-toc-wrap motion-element sidebar-panel sidebar-panel-active">
+          <div class="post-toc">
+
+            
+              
+            
+
+            
+              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#调度策略很重要"><span class="nav-number">1.</span> <span class="nav-text">调度策略很重要</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#Google-Borg"><span class="nav-number">1.1.</span> <span class="nav-text">Google Borg</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#AWS-RDS"><span class="nav-number">1.2.</span> <span class="nav-text">AWS RDS</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#视角"><span class="nav-number">2.</span> <span class="nav-text">视角</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#视角一-计算资源调度策略"><span class="nav-number">2.1.</span> <span class="nav-text">视角一 : 计算资源调度策略</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#峰值和均值"><span class="nav-number">2.1.1.</span> <span class="nav-text">峰值和均值</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#资源的平衡"><span class="nav-number">2.1.2.</span> <span class="nav-text">资源的平衡</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#视角二-存储资源调度策略"><span class="nav-number">2.2.</span> <span class="nav-text">视角二 : 存储资源调度策略</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#视角三-关系型数据库"><span class="nav-number">2.3.</span> <span class="nav-text">视角三 : 关系型数据库</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#亲和性-Affinity"><span class="nav-number">2.3.1.</span> <span class="nav-text">亲和性(Affinity)</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#反亲和性-Anti-Affinity"><span class="nav-number">2.3.2.</span> <span class="nav-text">反亲和性(Anti-Affinity)</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#分布度-Spread-Width"><span class="nav-number">2.3.3.</span> <span class="nav-text">分布度(Spread Width)</span></a></li></ol></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#结语"><span class="nav-number">3.</span> <span class="nav-text">结语</span></a></li></ol></div>
+            
+
+          </div>
+        </section>
+      <!--/noindex-->
+      
+
+      
+
+    </div>
+  </aside>
+
+
+        
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2018</span>
+  <span class="with-love" id="animate">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">rdc.woqu@woqutech.com</span>
+
+  
+
+  
+</div>
+
+
+
+
+  <div class="powered-by">Powered by <a class="theme-link" target="_blank" href="https://hexo.io">Hexo</a> v3.7.1</div>
+
+
+
+  <span class="post-meta-divider">|</span>
+
+
+
+  <div class="theme-info">Theme &mdash; <a class="theme-link" target="_blank" href="https://theme-next.org">NexT.Muse</a> v6.3.0</div>
+
+
+
+
+        
+
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+
+    
+      <div class="back-to-top">
+        <i class="fa fa-arrow-up"></i>
+        
+      </div>
+    
+
+    
+	
+    
+
+    
+  </div>
+
+  
+
+<script type="text/javascript">
+  if (Object.prototype.toString.call(window.Promise) !== '[object Function]') {
+    window.Promise = null;
+  }
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+  
+    <script type="text/javascript" src="/lib/jquery/index.js?v=2.1.3"></script>
+  
+
+  
+  
+    <script type="text/javascript" src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  
+
+  
+  
+    <script type="text/javascript" src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+  
+
+
+  
+
+
+  <script type="text/javascript" src="/js/src/utils.js?v=6.3.0"></script>
+
+  <script type="text/javascript" src="/js/src/motion.js?v=6.3.0"></script>
+
+
+
+  
+  
+
+  
+  <script type="text/javascript" src="/js/src/scrollspy.js?v=6.3.0"></script>
+<script type="text/javascript" src="/js/src/post-details.js?v=6.3.0"></script>
+
+
+
+  
+
+
+  <script type="text/javascript" src="/js/src/bootstrap.js?v=6.3.0"></script>
+
+
+
+  
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+  
+
+
+
+
+
+  
+
+  
+
+  
+
+  
+
+  
+  
+
+  
+
+  
+
+  
+
+  
+
+  
+
+</body>
+</html>
